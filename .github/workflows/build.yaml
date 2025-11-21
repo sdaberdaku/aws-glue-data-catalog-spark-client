@@ -1,0 +1,100 @@
+name: Build AWS Glue client for Apache Spark
+
+on:
+  push:
+    tags:
+      - '**'
+
+permissions:
+  contents: write
+
+env:
+  HIVE2_VERSION: 2.3.9
+  HIVE3_VERSION: 3.1.3
+  HADOOP_VERSION: 3.3.4
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Maven Action
+        uses: s4u/setup-maven-action@v1.19.0
+        with:
+          checkout-enabled: false
+          java-version: 8
+          maven-version: 3.9.9
+
+      - name: Check out current repository
+        uses: actions/checkout@v6
+        with:
+          path: resources
+
+      - name: Check out AWS Glue Maven repository
+        uses: actions/checkout@v6
+        with:
+          repository: sdaberdaku/aws-glue-data-catalog-client-for-apache-hive-metastore
+          ref: branch-3.4.0
+          path: glue
+
+      - name: Build Patched Apache Hive 2
+        run: |
+          # Download and extract Apache Hive 2 sources
+          wget --quiet -O hive2.tar.gz "https://github.com/apache/hive/archive/rel/release-${HIVE2_VERSION}.tar.gz"
+          mkdir hive2
+          tar zxf hive2.tar.gz --directory=hive2 --strip-components=1
+          
+          # Add the 2.3 version patch file
+          cp ./resources/HIVE-12679.branch-2.3.patch ./hive2/
+          
+          # conjars repository is dead, mirroring to another repo to download jars
+          cp -r ./resources/.mvn/ ./hive2/.mvn/
+          
+          # Build Hive2 with the AWS Glue patch
+          cd hive2
+          patch -p0 <HIVE-12679.branch-2.3.patch
+          mvn -T $(nproc) clean install -DskipTests
+
+      - name: Build Patched Apache Hive 3
+        run: |
+          # Download and extract Apache Hive 3 sources
+          wget --quiet -O hive3.tar.gz "https://github.com/apache/hive/archive/rel/release-${HIVE3_VERSION}.tar.gz"
+          mkdir hive3
+          tar zxf hive3.tar.gz --directory=hive3 --strip-components=1
+          
+          # Add the 3.1 version patch file
+          cp ./glue/branch_3.1.patch ./hive3/
+          
+          # conjars repository is dead, mirroring to another repo to download jars
+          cp -r ./resources/.mvn/ ./hive3/.mvn/
+          
+          # Build Hive3 with the AWS Glue patch
+          cd hive3
+          patch -p1 --merge <branch_3.1.patch
+          mvn -T $(nproc) clean install -DskipTests
+
+      - name: Build the AWS Glue Spark client
+        run: |
+          # conjars repository is dead, mirroring to another repo to download jars
+          cp -r ./resources/.mvn/ ./glue/.mvn/
+          # All clients must be built from the root directory of the AWS Glue Data Catalog Client repository.
+          # This will build both the Hive and Spark clients and necessary dependencies.
+          cd glue
+          mvn -T $(nproc) clean install \
+              -DskipTests \
+              -Dspark-hive.version="${HIVE2_VERSION}" \
+              -Dhive3.version="${HIVE3_VERSION}" \
+              -Dhadoop.version="${HADOOP_VERSION}"
+
+      - name: Collect release assets
+        run: |
+          mkdir release-assets
+          cp hive2/common/target/hive-common-${HIVE2_VERSION}.jar release-assets/hive-common-${HIVE2_VERSION}.jar
+          cp hive2/ql/target/hive-exec-${HIVE2_VERSION}-core.jar release-assets/hive-exec-${HIVE2_VERSION}-core.jar
+          cp glue/aws-glue-datacatalog-spark-client/target/aws-glue-datacatalog-spark-client-3.4.0-SNAPSHOT.jar release-assets/aws-glue-datacatalog-spark-client.jar
+
+      - name: Publish release with assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref }}
+          files: |
+            release-assets/*
