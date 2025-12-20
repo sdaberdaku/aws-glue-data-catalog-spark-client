@@ -31,5 +31,6 @@ selected Apache Spark version with the corresponding Hive and Hadoop versions us
 
 | Spark Version | Hive 2 Version | Hive 3 Version | Hadoop Version | Release Name |
 |---------------|----------------|----------------|----------------|--------------|
+| 4.1.0         | 2.3.10         | 3.1.3          | 3.4.2          | v4.1.0       |
 | 4.0.1         | 2.3.10         | 3.1.3          | 3.4.1          | v4.0.1       |
 | 3.5.x         | 2.3.9          | 3.1.3          | 3.3.4          | v3.5.x       |
