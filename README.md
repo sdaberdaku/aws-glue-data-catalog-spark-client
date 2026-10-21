@@ -1,33 +1,50 @@
 # aws-glue-data-catalog-spark-client
 
-AWS Glue Data Catalog client for Apache Spark
+Jars that let Apache Spark use the AWS Glue Data Catalog as its Hive metastore.
 
-This project provides an AWS Glue Data Catalog client implementation for Apache Spark. It allows Spark applications to
-interact with the AWS Glue Data Catalog as their metastore, enabling seamless integration with AWS services.
+AWS Glue is advertised as Hive-compatible, but Spark cannot use it as a metastore out of the box. Spark's Hive client
+has no way to plug in a different metastore client, and the
+[AWS Glue Data Catalog client](https://github.com/awslabs/aws-glue-data-catalog-client-for-apache-hive-metastore) needs
+one. This repository builds a patched Hive 2 that adds that option ([HIVE-12679](https://issues.apache.org/jira/browse/HIVE-12679))
+and the Glue client itself, for each Spark version, and publishes the jars as GitHub releases.
 
-Although AWS Glue is advertised as Hive-compatible, Apache Spark cannot use it as a metastore out-of-the-box. This
-repository builds a patched version of both Hive2 and Hive3, and the AWS Glue Hive Metastore Client. The required jars
-can then be added to Spark's classpath to enable AWS Glue as the metastore.
+There is no Java source here: the repository is the build recipe in `.github/workflows/build.yaml`. The build and the
+reasons for it are described in the articles
+[Building a custom Apache Spark Docker image with AWS Glue Data Catalog support as metastore](https://medium.com/towards-data-engineering/building-a-custom-apache-spark-docker-image-with-aws-glue-data-catalog-support-as-metastore-95ef9a709794)
+and [Enabling AWS Glue support in Apache Spark 4](https://medium.com/towards-data-engineering/enabling-aws-glue-support-in-apache-spark-4-2c1fca7a7149).
 
-The AWS Glue metastore is enabled by setting the following Spark config:
+## Usage
+
+Each release, tagged after the Spark version (for example `v4.2.0`), has three jars:
+
+- `hive-common-<hive>.jar` and `hive-exec-<hive>-core.jar`: the patched Hive 2 jars. They replace the files with the
+  same names in `$SPARK_HOME/jars`.
+- `aws-glue-datacatalog-spark-client.jar`: the Glue client. Add it to `$SPARK_HOME/jars`.
+
+The Glue client also needs the AWS SDK for Java 1.x jars `aws-java-sdk-glue`, `aws-java-sdk-core` and
+`aws-java-sdk-sts` (1.12.x, from Maven Central). For Spark 4.2.0:
+
+```bash
+RELEASE=https://github.com/sdaberdaku/aws-glue-data-catalog-spark-client/releases/download/v4.2.0
+wget -O "$SPARK_HOME/jars/hive-common-2.3.10.jar" "$RELEASE/hive-common-2.3.10.jar"
+wget -O "$SPARK_HOME/jars/hive-exec-2.3.10-core.jar" "$RELEASE/hive-exec-2.3.10-core.jar"
+wget -P "$SPARK_HOME/jars/" "$RELEASE/aws-glue-datacatalog-spark-client.jar"
+```
+
+Then enable Hive support and set the Glue client factory:
 
 ```
+spark.sql.catalogImplementation hive
 spark.hive.imetastoreclient.factory.class com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory
+spark.hadoop.aws.region eu-central-1
 ```
 
-Please refer to this repository for further
-info: https://github.com/awslabs/aws-glue-data-catalog-client-for-apache-hive-metastore.
+The client uses the default AWS credentials chain. [spark-with-glue](https://github.com/sdaberdaku/spark-with-glue)
+publishes Spark images with these jars already installed.
 
-## Notes
+## Versions
 
-The https://github.com/awslabs/aws-glue-data-catalog-client-for-apache-hive-metastore repository follows a branch-based
-approach in managing different versions and has renamed/deleted older branches in the past. To avoid future issues I
-have forked the original `branch-3.4.0` main branch of the repository into my GitHub account.
-
-This project also fixes the missing `conjars` maven repository, required when building the Glue Catalog Client.
-
-The following Apache Spark versions have been currently tested. It is important to check the compatibility of the
-selected Apache Spark version with the corresponding Hive and Hadoop versions used to build it.
+Pick the release that matches your Spark version. The Hive 2 version is the one Spark bundles.
 
 | Spark Version | Hive 2 Version | Hive 3 Version | Hadoop Version | Release Name |
 |---------------|----------------|----------------|----------------|--------------|
@@ -42,3 +59,24 @@ selected Apache Spark version with the corresponding Hive and Hadoop versions us
 
 Spark 4.2.0 ships Hadoop 3.5.0, whose jars target Java 17. The Glue client is built with JDK 8, so it still compiles
 against Hadoop 3.4.2. Hadoop is a `provided` dependency: at runtime the client uses the Hadoop bundled with Spark.
+
+## How the jars are built
+
+Pushing a tag starts the workflow, which runs on JDK 8 and Maven 3.9.9 and builds, in order:
+
+1. Hive 2: the Apache Hive release with `HIVE-12679.branch-2.3.patch` from this repository.
+2. Hive 3: the Apache Hive 3.1 release with the `branch_3.1.patch` from the Glue client repository. The Glue client
+   build depends on it, but its jars are not released.
+3. The Glue client, from [a fork](https://github.com/sdaberdaku/aws-glue-data-catalog-client-for-apache-hive-metastore)
+   of its `branch-3.4.0`. The upstream repository keeps one branch per version and has renamed or deleted branches in
+   the past, so the fork keeps the build reproducible.
+
+The `.mvn/settings.xml` file points the `conjars` repository, which no longer exists, to a mirror, so that the old Hive
+dependencies still resolve.
+
+To add a Spark version, set `HIVE2_VERSION` in the workflow to the `hive.version` of that Spark release, add a row to
+the table above, commit and push a tag named after the Spark version.
+
+## License
+
+[Apache License 2.0](LICENSE)
